@@ -1,0 +1,291 @@
+Based on the discussion, this appears to be a walkthrough of a patient escalation identification process that currently uses SQL/Alteryx workflows to identify patients at risk of escalation, followed by a conversation about automating the process and eventually enhancing it with AI.
+Understanding Document
+Business Purpose
+The current process identifies patients who are most likely to require intervention before they escalate into service issues. The goal is to proactively surface high-risk patients to contact center representatives so that issues can be resolved before becoming formal escalations.
+Currently, the process:
+•	Pulls inbound contact center call data.
+•	Combines multiple patient, task, prescription, and escalation data sources.
+•	Applies business rules and categorization logic.
+•	Produces a focused work queue of approximately 200-400 patients per day.
+•	Requires manual execution and Excel-based processing.
+The future goal is to:
+1.	Automate the process end-to-end.
+2.	Feed the results directly into Pega.
+3.	Expand patient coverage using AI-driven analysis.
+ 
+Current Data Sources
+1. Contact Center Call Data
+Included:
+•	Inbound calls only
+•	Calls associated with specific Contact Center Directors
+•	Calls with valid Patient IDs
+Excluded:
+•	Physician call data
+•	Outbound calls
+•	AOM calls
+•	Calls without Patient IDs
+Reason
+Patients without IDs cannot be connected to other enterprise systems and therefore cannot be analyzed effectively.
+ 
+2. Patient Information
+Additional patient data is brought in, including:
+•	Patient Name
+•	Patient ID
+•	Date of Birth
+•	Demographic information
+•	Patient account information
+ 
+3. Duplicate Account Detection
+The process identifies duplicate patient accounts using:
+•	Same patient name
+•	Same date of birth
+•	Different patient IDs
+Business Problem
+Duplicate accounts may cause:
+•	Prior Authorizations (PAs) entered under one account
+•	Approvals entered under another account
+•	Delays in patient processing
+•	Confusion among agents
+Patients with duplicate accounts are categorized separately for easier resolution.
+ 
+4. Task Data
+Various patient tasks are pulled into the process.
+Task information is used to identify:
+•	Open work items
+•	Delayed processing
+•	Potential shipment issues
+ 
+5. Existing Operational Intelligence Data
+The query references an Ops Intel/Ops Insight table.
+Purpose:
+•	Exclude patients that are already being monitored
+•	Prevent duplicate records
+•	Avoid duplicate work queues
+ 
+Processing Method
+Temporary Tables
+All source datasets are first loaded into temporary tables.
+Benefits:
+•	Improves query performance
+•	Simplifies final joins
+•	Reduces processing time
+ 
+Final Consolidated Query
+A master query joins:
+•	Call data
+•	Patient data
+•	Prescription data
+•	Task data
+•	Escalation history
+•	Duplicate account flags
+This query applies multiple categorization rules.
+ 
+Patient Categorization Logic
+1. Priority Therapy
+Patients are categorized as Priority Therapy when they belong to predefined high-priority therapies.
+Purpose:
+•	Allow teams to focus on critical therapies first.
+ 
+2. Duplicate Accounts
+Patients identified by the duplicate account logic are categorized accordingly.
+Purpose:
+•	Alert representatives to account consolidation issues.
+ 
+3. Previous Escalations
+Patients are categorized if:
+•	They had an escalation within the previous 6 months
+•	But NOT within the last 14 days
+Rationale
+Patients with recent escalations are already being managed.
+Patients with historical escalations:
+•	Have a higher likelihood of escalating again
+•	Are valuable targets for proactive intervention
+ 
+4. CCC Limitations
+Patients are categorized as CCC Limitation when:
+•	Specific status codes are present
+•	Task creation date exceeds 10 days
+Purpose:
+•	Identify known operational issues requiring attention.
+ 
+5. Other
+Any remaining patients are categorized as:
+•	Other
+ 
+Escalation Exclusion Logic
+Patients are excluded when:
+Recent Escalation
+Escalation occurred within:
+•	Last 14 days
+Reason:
+•	Already being actively worked by escalation teams.
+ 
+Repeat Caller Logic
+Patients are included when:
+•	They called within the last 14 days
+•	Have not formally escalated
+Reason:
+These patients may:
+•	Be repeat callers
+•	Be experiencing unresolved issues
+•	Represent future escalation risks
+ 
+Prescription and Shipment Rules
+Patients are flagged when:
+•	Tasks exist within the prescription processing window
+•	Orders have not shipped
+•	HID (Home Infusion Delivery) date is approaching
+Specific rules include:
+Next Delivery Date
+Look ahead:
+•	7 days
+Purpose:
+Identify patients requiring deliveries soon.
+ 
+Missing Shipment
+Flag when:
+•	HID date approaching
+•	No shipment date recorded
+ 
+Missing Profile Lock
+Flag when:
+•	Profile lock date is absent
+ 
+Open Tasks
+Only consider:
+•	Incomplete tasks
+Exclude:
+•	Completed tasks
+ 
+Call Activity Requirement
+The final dataset only includes:
+Patients who have contacted the contact center within the previous 14 days.
+Reason:
+The process is intended to identify active patients experiencing potential service issues.
+ 
+Current Output
+Daily patient volume:
+Time Period	Volume
+Beginning of Week	300-400
+Later in Week	<200
+Typical Average	~200
+The current logic intentionally narrows the patient population to reduce false positives and keep workloads manageable.
+ 
+Current Manual Process
+Today the workflow requires:
+1.	Run Alteryx package
+2.	Generate patient list
+3.	Export results to Excel
+4.	Compare against master spreadsheet
+5.	Remove accounts already worked within previous 28 days
+6.	Publish final list for users
+Limitation
+The team lacks write access to a database or ETL platform.
+Because of this:
+•	Excel is used as temporary storage
+•	Deduplication is performed manually
+ 
+Future State (Phase 1)
+Automation
+Automate the existing workflow by:
+•	Scheduling SQL jobs
+•	Reading data directly from Databricks/Oracle
+•	Running business logic automatically
+•	Loading results directly into Pega
+Benefits:
+•	Eliminate manual execution
+•	Remove Excel dependency
+•	Create a single source of truth for users
+ 
+Future State (Phase 2)
+AI Agent Expansion
+Current process reviews:
+•	Approximately 200 patients daily
+Future AI-enabled process could:
+•	Evaluate 1,000-2,000+ patients daily
+•	Relax current filtering constraints
+•	Detect escalation risk in broader populations
+•	Reduce dependency on manual review capacity
+The AI agent would start with the current rules and eventually expand beyond the current patient criteria.
+ 
+Executive Summary
+The current solution is a rules-based escalation prevention workflow that combines call data, patient information, prescription status, tasks, and historical escalations to identify patients likely to require intervention. The process intentionally produces a small, highly targeted patient population (~200/day) to minimize false positives. Execution is currently manual and dependent on Alteryx and Excel.
+The proposed enhancement is a two-phase modernization effort:
+1.	Automate the existing query and feed results directly into Pega through an ETL process.
+2.	Introduce AI-driven patient analysis to expand the population reviewed and proactively identify additional escalation risks beyond the current rule-based framework.
+ 
+Follow-Up Questions
+Business Questions
+1.	What is the exact business definition of a "Propensity to Escalate" patient?
+2.	What are the measurable success metrics for this process?
+3.	How many escalations are prevented today through this workflow?
+4.	What percentage of identified patients ultimately escalate?
+5.	Which categories (Priority Therapy, Duplicate Account, Previous Escalation, CCC Limitation) generate the highest escalation rates?
+ 
+Data Questions
+1.	What are the exact source systems for: 
+o	Call data
+o	Patient data
+o	Prescription data
+o	Task data
+o	Escalation data
+1.	Are all data sources currently available in Databricks?
+2.	Which source remains in Oracle (Chart Notes only or additional datasets)?
+3.	What refresh frequency exists for each dataset?
+4.	Is there a data dictionary available for all fields used in the query?
+ 
+Logic Questions
+1.	What defines a "high-priority therapy"?
+2.	Is the therapy list maintained by business users?
+3.	Can the duplicate account logic produce false positives?
+4.	Why was the 14-day escalation exclusion window selected?
+5.	Why was the 6-month historical escalation lookback selected?
+6.	Why was the 7-day HID threshold selected?
+7.	Why was the 10-day CCC limitation threshold selected?
+8.	What additional logic exists in the chart notes exclusion query?
+ 
+Automation Questions
+1.	Where should the automated ETL be hosted?
+2.	Which platform will orchestrate the workflow?
+3.	How will 28-day duplicate suppression be stored?
+4.	Will a historical tracking table be created?
+5.	What audit and monitoring capabilities are required?
+6.	What SLA is expected for daily processing?
+ 
+Pega Integration Questions
+1.	What is the target Pega table/schema?
+2.	What fields are required by Pega?
+3.	Is a new flag column required for source identification?
+4.	Should records indicate:
+•	Query-generated
+•	AI-generated
+•	Existing model-generated
+1.	How will users differentiate recommendations in Pega?
+2.	Does Pega require incremental loads or full refreshes?
+ 
+AI Agent Questions
+1.	Which filters would be relaxed first?
+2.	What additional patient populations should be analyzed?
+3.	What historical escalation data is available for model training?
+4.	How will AI recommendations be validated?
+5.	What precision/recall targets would be acceptable?
+6.	Should the AI prioritize:
+•	Escalation prevention
+•	Operational delays
+•	Delivery risk
+•	Patient experience issues
+1.	Will AI recommendations be advisory only or trigger automated workflows?
+2.	How will human feedback be incorporated into future model improvements?
+ 
+Key Takeaway
+This initiative is a strong candidate for a phased modernization approach:
+Phase 1: Automate the existing SQL/Alteryx workflow and integrate directly with Pega, eliminating manual processing and Excel-based deduplication.
+Phase 2: Introduce an AI-driven escalation detection engine that expands beyond the current highly filtered rules-based population and proactively identifies additional patients at risk of escalation.
+Provide your feedback on BizChat
+Explain duplicate account logicClarify escalation exclusion rules
+Get help with all your work. Upgrade Copilot for answers relevant to all your work—email, calendar, files, and more.
+ 
+Get help with all your workUpgrade Copilot for answers relevant to all your work—email, calendar, files, and more.
+Upgrade Copilot
+Drop your files here
+
