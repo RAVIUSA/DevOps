@@ -1,0 +1,499 @@
+/* DATES */
+
+DROP TABLE IF EXISTS #StartDate
+
+SELECT
+DATEADD(DAY,-30,CAST(GETDATE() AS DATE)) AS StartDate
+INTO
+#StartDate
+
+
+DROP TABLE IF EXISTS #EscStartDate
+
+SELECT
+DATEADD(MONTH,-6,CAST(GETDATE() AS DATE)) AS EscStartDate
+INTO
+#EscStartDate
+
+
+DROP TABLE IF EXISTS #TaskStartDate
+
+SELECT
+DATEADD(DAY,-60,CAST(GETDATE() AS DATE)) AS TaskStartDate
+INTO
+#TaskStartDate
+
+
+/* RX DATA */
+
+DROP TABLE IF EXISTS #Rx
+
+SELECT 
+a.svcbr_id
+,a.prescription_id
+,a.refill_no
+,a.shipment_id
+,a.therapy_type
+,a.rx_status
+,a.no_days_shipment_last
+,a.est_delivery_date
+,a.creation_date
+,a.profile_lock_date
+,a.rx_status_date
+,a.completed_date
+,a.update_date
+,CASE WHEN a.refill_no = '0' AND a.RXP_WIP_STATUS = 'HOLD-UNTILRELEASEDT-NONSCHEDULABLE' THEN DATEADD(DAY,3,a.rxp_wip_date) 
+WHEN RXP_WIP_STATUS = 'HOLD-LOAD/MAINT' THEN DATEADD(DAY,3,a.rxp_wip_date) 
+WHEN RXP_WIP_STATUS = 'HOLD-UNTILRXEXPIRATION-NONSCHEDULABLE' THEN DATEADD(DAY,30,a.next_delivery_date) 
+ELSE a.next_delivery_date END AS next_delivery_date
+,a.patient_id
+,a.expiration_date
+,a.void_date
+,a.NBD_Confirmation
+,a.Exhaust_Date
+,a.rx_written_date
+,a.physician_id
+,a.DAW_CODE
+,a.PT_DAW_FLAG
+,a.MD_DAW_FLAG
+,a.shipping_id
+,a.auto_srs_flag
+,a.pac_rx_status
+,a.pac_rx
+,a.Therapy_Start_Date
+,a.prescr_ship_date
+INTO
+#Rx
+FROM
+OpsRxhPrescription.dbo.rxhome_prod_prescriptions_table a WITH (NOLOCK)
+LEFT JOIN
+OpsRef.dbo.therapydivisionmapping b WITH (NOLOCK)
+ON
+a.therapy_type = b.strTherapyType
+WHERE
+b.strDivisionName = 'ACDO-THER'
+AND
+b.strTRCNameCurrent IN ('ASTHMA AND ALLERGY','ENDOCRINE','FERTILITY','HEPATOLOGY','HIV','NEUROLOGY AND MS','RAI','SELECT SPECIALTY CONDITIONS','TRANSPLANT')
+AND
+a.therapy_type NOT IN ('AMPR','AVNX','AVOM','AVS2','AVST','DALF','PLGD','TYSB','VMTY','OCRV','ZUNV'
+,'RCLS','ZLDR','AVSL','REMA','REM','INFL','RNFL','OMVV','QTTV','SAPH','TYIV','ORNC','SMPA'
+,'BENL','ACTV','SKYV','TRFV','ENTY','NLGX','BRMV','TRGZ','STLV','TPZZ','UPLZ','CMZS','ARST'
+                ,'DYST','YTGI','BRXD','ZRZV')
+AND
+a.rx_status NOT IN ('DC','VOID')
+AND
+CASE WHEN a.refill_no = '0' AND a.RXP_WIP_STATUS = 'HOLD-UNTILRELEASEDT-NONSCHEDULABLE' THEN DATEADD(DAY,3,a.rxp_wip_date) 
+WHEN RXP_WIP_STATUS = 'HOLD-LOAD/MAINT' THEN DATEADD(DAY,3,a.rxp_wip_date) 
+WHEN RXP_WIP_STATUS = 'HOLD-UNTILRXEXPIRATION-NONSCHEDULABLE' THEN DATEADD(DAY,30,a.next_delivery_date)  
+ELSE a.next_delivery_date END >= DATEADD(DAY,14,(SELECT StartDate FROM #StartDate))
+
+
+/* ESCALATION PATIENTS */
+
+DROP TABLE IF EXISTS #EscalatedPatients
+
+SELECT DISTINCT
+p.dtSubmitDateTime
+,reason.strparentvalue
+,a.intParentCaseId_fk
+,p.strClientMemberNumber
+,CASE WHEN reason.strFieldName = 'intReason' THEN reason.strValue END AS reason 
+,CASE WHEN reasonD.strFieldName = 'intReasonDetail' THEN reasonD.strValue END AS reasonDetail
+,CASE WHEN tertiary.strFieldName = 'intTertiaryDetail' THEN tertiary.strValue END AS tertiaryDetail
+INTO
+#EscalatedPatients
+FROM
+OpsSpecApp.dbo.et_specialty_casetracker_case a WITH (NOLOCK)
+INNER JOIN
+OpsSpecApp.dbo.et_casetracker_case p WITH (NOLOCK)
+ON
+a.intparentcaseid_fk = p.intparentcaseid_pk
+AND
+a.intCaseID_pk = p.intCurrentAreaCaseId
+LEFT JOIN
+OpsSpecApp.dbo.et_specialty_casetracker_formselects category WITH (NOLOCK)
+ON
+a.intCategoryId_fk = category.intselectid_pk
+LEFT JOIN
+OpsSpecApp.dbo.et_specialty_casetracker_formselects reason WITH (NOLOCK)
+ON
+a.intReasonId_fk = reason.intselectid_pk
+LEFT JOIN
+OpsSpecApp.dbo.et_specialty_casetracker_formselects reasonD WITH (NOLOCK)
+ON
+a.intReasonDetailId_fk = reasonD.intselectid_pk
+LEFT JOIN
+OpsSpecApp.dbo.et_specialty_casetracker_formselects tertiary WITH (NOLOCK)
+ON
+a.intTertiaryDetail_fk = tertiary.intselectid_pk
+LEFT JOIN
+OpsSpecApp.dbo.et_specialty_casetracker_formselects contacttype WITH (NOLOCK)
+ON
+a.intContactTypeId_fk = contacttype.intselectid_pk
+WHERE
+p.dtSubmitDateTime >= (SELECT EscStartDate FROM #EscStartDate)
+AND
+reason.strparentvalue IN ('Escalation / Variance','Frequent Caller')
+AND
+TRY_CONVERT(INT, p.strClientMemberNumber) IS NOT NULL
+
+
+
+/* CALLS */
+
+DROP TABLE IF EXISTS #Calls
+
+SELECT DISTINCT
+CallDate
+,correctedPatientID
+,InteractionID
+INTO
+#Calls
+FROM
+OpsSpecContact.dbo.Specialty_Pega_stats_Detail_All WITH (NOLOCK)
+WHERE
+CallDate >= (SELECT StartDate FROM #StartDate)
+AND
+CallDirection = 'Inbound' 
+AND
+InteractionType = 'Inbound'
+AND
+VQName NOT IN ('SPCC_PSC_PHYSICIAN_INBOUND_VQ','SPCC_PSC_PHYSICIAN_ESCALATION_VQ','SPCC_PSC_PHYSICIAN_MTF_INBOUND_VQ','SPCC_ONCOLOGY_PHYSICIAN_INBOUND_VQ')
+AND
+dirResourceId IN (
+                '327718' --Kathy
+                ,'326338' -- Mel
+                ,'34657' --Jeff
+                ,'33979' --Erica
+                ,'141107' --Tracy
+                ,'142042' --Liz
+                ,'42657' --Chad
+                ,'146152' --Vatayshi
+)
+AND
+correctedPatientID IS NOT NULL
+
+
+
+/* TASK DATA */
+
+DROP TABLE IF EXISTS #Tasks
+
+SELECT
+a.TASK_ID
+,a.TASK_DATE
+,a.CREATION_DATE AS TASK_CREATION_DATE
+,a.LAST_STATUS_DATE AS TASK_LAST_STATUS_DATE 
+,a.DESCRIPTION AS TASK_DESCRIPTION
+,a.SOURCE_TYPE
+,a.PATIENT_ID AS TASK_PATIENT_ID
+,a.SVCBR_ID AS TASK_SVCBR_ID
+,a.PRESCRIPTION_ID AS TASK_PRESCRIPTION_ID
+,a.REFILL_NO AS TASK_REFILL_NO
+,a.TASK_PRIORITY
+,b.NAME AS WORKQUEUE_NAME
+,b.DESCRIPTION AS WORKQUEUE_DESCRIPTION
+,c.DESCRIPTION AS TEAM_DESCRIPTION
+,d.TASK_TYPE
+,e.REASON_CODE AS TASK_STS_REASON_CODE
+,f.TASK_STATUS
+INTO
+#Tasks
+FROM
+OpsRxhTasks.dbo.rxhome_prod_wq_tasks a WITH (NOLOCK)
+LEFT JOIN
+OpsRxhTasks.dbo.rxhome_prod_ft_workqueues b WITH (NOLOCK)
+ON
+a.WORKQUEUE_ID = b.WORKQUEUE_ID
+LEFT JOIN
+OpsRxhTasks.dbo.rxhome_prod_ft_team_assignments c WITH (NOLOCK)
+ON
+a.TEAM_ASSIGNMENT_ID = c.TEAM_ASSIGNMENT_ID
+LEFT JOIN
+OpsRxhTasks.dbo.rxhome_prod_ft_task_types d WITH (NOLOCK)
+ON
+a.TASK_TYPE_ID = d.TASK_TYPE_ID
+LEFT JOIN
+OpsRxhTasks.dbo.rxhome_prod_ft_task_sts_reason_codes e WITH (NOLOCK)
+ON
+a.TASK_STS_REASON_CODE_ID = e.TASK_STS_REASON_CODE_ID
+LEFT JOIN
+OpsRxhTasks.dbo.rxhome_prod_ft_task_statuses f WITH (NOLOCK)
+ON
+a.TASK_STATUS_ID = f.TASK_STATUS_ID
+WHERE
+a.TASK_DATE >= (SELECT StartDate FROM #StartDate)
+
+
+
+/* PATIENT DATA */
+
+DROP TABLE IF EXISTS #PatientDups
+
+SELECT
+a.ID
+,a.first
+,a.last
+,a.date_of_birth
+,b.DuplicateAcct
+INTO
+#PatientDups
+FROM
+OpsRxhPatient.dbo.rxhome_prod_patients_table a WITH (NOLOCK)
+INNER JOIN
+(
+                SELECT
+                a.first
+                ,a.last
+                ,a.date_of_birth
+                ,MAX(a.DuplicateAcct) AS DuplicateAcct
+                FROM
+                (
+                                SELECT DISTINCT
+                                ID
+                                ,first
+                                ,last
+                                ,date_of_birth
+                                ,ROW_NUMBER() OVER(PARTITION BY 
+                                                first
+                                                ,last
+                                                ,date_of_birth
+                                                ORDER BY ID) AS DuplicateAcct
+                                FROM
+                       OpsRxhPatient.dbo.rxhome_prod_patients_table WITH (NOLOCK)
+                ) a
+                WHERE
+                a.DuplicateAcct > 1
+                GROUP BY
+                a.first
+                ,a.last
+                ,a.date_of_birth
+) b
+ON
+a.first = b.first 
+AND
+a.last = b.last
+AND
+a.date_of_birth = b.date_of_birth
+
+
+
+DROP TABLE IF EXISTS #Patients
+
+SELECT DISTINCT
+a.ID
+,a.first
+,a.last
+,a.city
+,a.state
+,a.zip1
+,a.sex
+,DATEDIFF(YEAR,a.date_of_birth,CAST(GETDATE() AS DATE)) AS age
+,a.language_spoken
+,a.charges
+,a.pmt_deductions
+,a.adj_deductions
+,a.balance_due
+,a.payments
+,a.adjustments
+,a.unpaid
+,a.prescriptions_count
+,a.sales_marketing_status
+,a.pharmacy_status
+,a.nursing_status
+,a.csr_status
+,a.collector
+,a.nkda_flag
+,a.SINGLE_PROFILE
+,CASE WHEN c.DuplicateAcct IS NOT NULL THEN 'Y' ELSE 'N' END AS DuplicateAcct
+INTO
+#Patients
+FROM
+OpsRxhPatient.dbo.rxhome_prod_patients_table a WITH (NOLOCK)
+LEFT JOIN
+OpsRxhPrescription.dbo.rxhome_prod_prescriptions_table b WITH (NOLOCK)
+ON
+a.ID = b.patient_id
+LEFT JOIN
+#PatientDups c
+ON
+a.first = c.first 
+AND
+a.last = c.last
+AND
+a.date_of_birth = c.date_of_birth
+WHERE
+b.creation_date >= (SELECT DATEADD(DAY,-90,StartDate) FROM #StartDate)
+
+
+
+/* ML PTE PATIENTS */
+
+DROP TABLE IF EXISTS #ML
+
+SELECT * 
+--DISTINCT
+--patient_id
+INTO
+#ML
+FROM
+OpsSpecData.dbo.jd_WDT_Escalation_Propensity WITH (NOLOCK)
+WHERE
+prediction_date >= (SELECT StartDate FROM #StartDate)
+
+
+
+/* FILE QUERY */
+
+SELECT DISTINCT
+a.patient_id
+,a.therapy_type
+,a.svcbr_id
+,a.prescription_id
+,a.refill_no
+,a.shipment_id
+,a.rx_status
+,a.no_days_shipment_last
+,a.est_delivery_date
+,a.creation_date
+,a.profile_lock_date
+,a.rx_status_date
+,a.completed_date
+,a.update_date
+,a.next_delivery_date
+,a.expiration_date
+,a.void_date
+,a.NBD_Confirmation
+,a.Exhaust_Date
+,a.rx_written_date
+,a.physician_id
+,a.DAW_CODE
+,a.PT_DAW_FLAG
+,a.MD_DAW_FLAG
+,a.shipping_id
+,a.auto_srs_flag
+,a.pac_rx_status
+,a.pac_rx
+,a.Therapy_Start_Date
+,a.prescr_ship_date
+
+,b.dtSubmitDateTime
+,b.strparentvalue
+,b.intParentCaseId_fk
+,b.reason 
+,b.reasonDetail
+,b.tertiaryDetail
+
+,c.CallDate
+,c.InteractionID
+
+,d.TASK_ID
+,d.TASK_DATE
+,d.TASK_CREATION_DATE
+,d.TASK_LAST_STATUS_DATE
+,d.TASK_DESCRIPTION
+,d.SOURCE_TYPE
+,d.TASK_SVCBR_ID
+,d.TASK_PRESCRIPTION_ID
+,d.TASK_REFILL_NO
+,d.TASK_PRIORITY
+,d.WORKQUEUE_NAME
+,d.WORKQUEUE_DESCRIPTION
+,d.TEAM_DESCRIPTION
+,d.TASK_TYPE
+,d.TASK_STS_REASON_CODE
+,d.TASK_STATUS
+
+,i.city
+,i.state
+,i.zip1
+,i.sex
+,i.age
+,i.language_spoken
+,i.charges
+,i.pmt_deductions
+,i.adj_deductions
+,i.balance_due
+,i.payments
+,i.adjustments
+,i.unpaid
+,i.prescriptions_count
+,i.sales_marketing_status
+,i.pharmacy_status
+,i.nursing_status
+,i.csr_status
+,i.collector
+,i.nkda_flag
+,i.SINGLE_PROFILE
+
+,CASE WHEN a.therapy_type IN ('UPLZ','APKF','APKI','APKN','APKR','ACGL','EPDX','SUBC','BRXB','BRXD','TYRK','SABR','VIGA','STLR','STLV','BOTX') THEN 'Priority Therapy' 
+WHEN i.DuplicateAcct = 'Y' THEN 'Duplicate Account'
+WHEN e.intParentCaseId_fk IS NOT NULL THEN 'Previous Escalation' 
+WHEN d.TASK_STS_REASON_CODE = 'CCC LIMITATION' AND d.TASK_CREATION_DATE <= DATEADD(DAY,-10,CAST(GETDATE() AS DATE)) THEN 'Unworked CCC Limitation' ELSE 'Other' END AS PTEReason
+
+,CASE WHEN a.therapy_type IN ('UPLZ','APKF','APKI','APKN','APKR','ACGL','EPDX','SUBC','BRXB','BRXD','TYRK','SABR','VIGA','STLR','STLV','BOTX') THEN '1' 
+WHEN i.DuplicateAcct = 'Y' THEN '4'
+WHEN e.intParentCaseId_fk IS NOT NULL THEN '3' 
+WHEN d.TASK_STS_REASON_CODE = 'CCC LIMITATION' AND d.TASK_CREATION_DATE <= DATEADD(DAY,-10,CAST(GETDATE() AS DATE)) THEN '2' ELSE '5' END AS Ranking
+FROM
+#Patients i
+LEFT JOIN
+#Rx a WITH (NOLOCK)
+ON
+i.ID = a.patient_id
+LEFT JOIN
+#EscalatedPatients b
+ON
+a.patient_id = b.strClientMemberNumber
+AND
+b.dtSubmitDateTime >= DATEADD(DAY,-14,a.next_delivery_date)
+LEFT JOIN
+#Calls c
+ON
+a.patient_id = c.correctedPatientID
+AND
+c.CallDate >= DATEADD(DAY,-14,a.next_delivery_date)
+LEFT JOIN
+#Tasks d
+ON
+a.patient_id = d.TASK_PATIENT_ID
+AND
+d.TASK_DATE >= DATEADD(DAY,-60,a.next_delivery_date)
+AND
+d.TASK_DATE <= a.next_delivery_date
+LEFT JOIN
+#EscalatedPatients e
+ON
+a.patient_id = e.strClientMemberNumber
+AND
+e.dtSubmitDateTime >= DATEADD(MONTH,-6,a.next_delivery_date)
+AND
+e.dtSubmitDateTime < DATEADD(DAY,-14,a.next_delivery_date)
+WHERE
+a.next_delivery_date >= CAST(GETDATE() AS DATE)
+AND
+a.next_delivery_date <= DATEADD(DAY,7,CAST(GETDATE() AS DATE))
+AND
+a.prescription_id IS NOT NULL
+AND
+d.TASK_ID IS NOT NULL
+AND
+b.intParentCaseId_fk IS NULL
+AND
+a.profile_lock_date IS NULL
+AND
+a.prescr_ship_date IS NULL
+AND
+d.TASK_STATUS NOT LIKE '%COMPLETED%'
+AND
+c.InteractionID IS NOT NULL
+AND
+CASE WHEN d.TASK_STS_REASON_CODE = 'CCC LIMITATION' AND d.TASK_CREATION_DATE <= DATEADD(DAY,-10,CAST(GETDATE() AS DATE)) THEN 5 ELSE DATEDIFF(DAY,d.TASK_CREATION_DATE,a.next_delivery_date) END BETWEEN 5 AND 30 
+AND
+a.patient_id NOT IN (SELECT patient_id FROM #ML WHERE prediction_date >= DATEADD(DAY,-14,CAST(GETDATE() AS DATE)))
+AND
+d.TASK_DESCRIPTION NOT IN ('RXP DUMMY PROFILE LOCK','RXP DUMMY ORDER ENTRY NEW REF','RXP DUMMY ORDER ENTRY RENEWALS','RXP DUMMY RX REQUEST','AR Management Task')
+AND
+d.WORKQUEUE_NAME NOT IN ('CLEARANCE','AUTHORIZATION')
+AND
+a.rx_status NOT IN ('DC','VOID')
